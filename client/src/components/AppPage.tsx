@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { format } from "date-fns";
+import { format, differenceInMonths, addDays, subDays } from "date-fns";
 import { Calendar as CalendarIcon, TrendingUp, Loader2, BarChart3, Table as TableIcon } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,7 @@ export function AppPage() {
   const [ticker, setTicker] = useState("");
   const [startDate, setStartDate] = useState<Date | undefined>(() => {
     const now = new Date();
-    return new Date(now.getFullYear(), 0, 1); // Start of current year
+    return new Date(now.getFullYear() - 1, 0, 1); // Start of last year
   });
   const [endDate, setEndDate] = useState<Date | undefined>(new Date());
   const [interval, setInterval] = useState("1d");
@@ -33,6 +33,7 @@ export function AppPage() {
   const [loading, setLoading] = useState(false);
   const [forecastLoading, setForecastLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [forecastTimeWindow, setForecastTimeWindow] = useState(30);
   const dataDisplayRef = useRef<HTMLDivElement>(null);
 
   const handleFetchData = async () => {
@@ -46,6 +47,19 @@ export function AppPage() {
       return;
     }
 
+    // Validate date range
+    const today = new Date();
+    if (endDate > today) {
+      setError("End date cannot be in the future");
+      return;
+    }
+
+    const monthsDifference = differenceInMonths(endDate, startDate);
+    if (monthsDifference < 6) {
+      setError("Date range must be at least 6 months. Please select a start date that is at least 6 months before the end date.");
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setForecastData([]);
@@ -56,7 +70,14 @@ export function AppPage() {
       const data = await fetchStockData(ticker, startDateStr, endDateStr, interval);
       setStockData(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch stock data");
+      // Check if it's a stock not found error
+      const errorMessage = err instanceof Error ? err.message : "Failed to fetch stock data";
+      if (errorMessage.includes("JSON.parse") || errorMessage.includes("unexpected end of data") || 
+          errorMessage.includes("404") || errorMessage.includes("Not Found")) {
+        setError(`Stock symbol "${ticker}" not found or no data available for the selected date range. Please verify the ticker symbol and try again.`);
+      } else {
+        setError(errorMessage);
+      }
       setStockData([]);
     } finally {
       setLoading(false);
@@ -378,10 +399,36 @@ export function AppPage() {
 
                     {forecastData.length > 0 && (
                       <>
-                        <div className="mt-6">
+                        <div className="mt-6 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-lg font-medium">Time Window</h4>
+                            <div className="flex rounded-lg border p-1">
+                              {[30, 60, 120].map((days) => (
+                                <button
+                                  key={days}
+                                  onClick={() => setForecastTimeWindow(days)}
+                                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                                    forecastTimeWindow === days
+                                      ? "bg-primary text-primary-foreground shadow-sm"
+                                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                                  }`}
+                                >
+                                  {days}d
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                           <ForecastChart
-                            stockData={stockData}
-                            forecastData={forecastData}
+                            stockData={stockData.filter(row => {
+                              const rowDate = new Date(row.Date);
+                              const cutoffDate = subDays(endDate || new Date(), forecastTimeWindow);
+                              return rowDate >= cutoffDate;
+                            })}
+                            forecastData={forecastData.filter(row => {
+                              const rowDate = new Date(row.ds);
+                              const cutoffDate = subDays(endDate || new Date(), forecastTimeWindow);
+                              return rowDate >= cutoffDate;
+                            })}
                             ticker={ticker}
                           />
                         </div>
